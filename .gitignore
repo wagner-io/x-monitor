@@ -1,0 +1,93 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environment
+.env
+.venv
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+.terraform.lock.hcl
+
+# AWS
+*.pem
+aws_credentials
+.aws/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Misc
+.cache/
+.pytest_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# Local development configs
+config.local.yml
+*.local.yml
+
+# Sensitive Information
+secrets.yml
+*.secret
+
+# Große Terraform-Provider-Dateien
+infra/.terraform/providers/registry.terraform.io/hashicorp/aws/*/darwin_arm64/terraform-provider-aws*
+
+# Große Binärdateien und Artefakte
+*.bin
+*.tar.gz
+*.zip
+
+# Temporäre Verzeichnisse und Dateien
+tmp/
+temp/
+.tmp/
+.temp/
+
+# Große Modell- und Indexdateien
+*.faiss
+*.index
+models/
+indexes/
