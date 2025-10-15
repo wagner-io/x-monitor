@@ -1,0 +1,67 @@
+name: Build & Deploy x-monitor indexer (ECS/Fargate)
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - "indexer/**"
+      - ".github/workflows/deploy-indexer.yml"
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: eu-central-1
+  REPO_NAME: x-monitor-indexer
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-deploy-role
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Get ECR repo URI from Terraform output (optional fallback)
+        id: tfout
+        run: |
+          echo "repo=$(aws ecr describe-repositories --repository-names $REPO_NAME --query 'repositories[0].repositoryUri' --output text)" >> $GITHUB_OUTPUT
+
+      - name: Login to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build image
+        run: |
+          docker build -t $REPO_NAME:ci -f indexer/Dockerfile indexer
+          IMAGE_URI="${{ steps.tfout.outputs.repo }}:$(git rev-parse --short HEAD)"
+          docker tag $REPO_NAME:ci $IMAGE_URI
+          echo "IMAGE_URI=$IMAGE_URI" >> $GITHUB_ENV
+
+      - name: Push image
+        run: docker push $IMAGE_URI
+
+      - name: Register new task definition revision with new image
+        id: register
+        run: |
+          FAMILY=$(aws ecs list-task-definitions --family-prefix x-monitor-indexer --query 'taskDefinitionArns[-1]' --output text | sed 's/:task-definition.*//g' || echo "x-monitor-indexer")
+          # Hole letzte TD und ersetze Image
+          BASE_TD=$(aws ecs describe-task-definition --task-definition x-monitor-indexer --query 'taskDefinition')
+          NEW_TD=$(echo "$BASE_TD" | jq 'del(.status,.revision,.taskDefinitionArn,.requiresAttributes,.compatibilities,.registeredAt,.registeredBy) | .containerDefinitions[0].image = env.IMAGE_URI')
+          echo "$NEW_TD" > td.json
+          ARN=$(aws ecs register-task-definition --cli-input-json file://td.json --query 'taskDefinition.taskDefinitionArn' --output text)
+          echo "NEW_TD_ARN=$ARN" >> $GITHUB_ENV
+
+      - name: Update EventBridge target to latest TD revision
+        run: |
+          RULE="x-monitor-run-indexer-15min"
+          CLUSTER_ARN=$(aws ecs describe-clusters --clusters x-monitor-cluster --query 'clusters[0].clusterArn' --output text)
+          SG_ID=$(aws ec2 describe-security-groups --filters Name=group-name,Values=x-monitor-fargate-sg --query 'SecurityGroups[0].GroupId' --output text)
+          SUBNETS=$(aws ec2 describe-subnets --filters Name=vpc-id,Values=$(aws ec2 describe-vpcs --filters Name=isDefault,Values=true --query 'Vpcs[0].VpcId' --output text) --query 'Subnets[].SubnetId' --output text | tr '\t' ',')
+          aws events put-targets --rule "$RULE" --targets "Id"="ecsTarget","Arn"="$CLUSTER_ARN","RoleArn"="$(aws iam get-role --role-name x-monitor-events-invoke-ecs --query 'Role.Arn' --output text)","EcsParameters"="{\"TaskDefinitionArn\":\"${NEW_TD_ARN}\",\"LaunchType\":\"FARGATE\",\"NetworkConfiguration\":{\"awsvpcConfiguration\":{\"Subnets\":[${SUBNETS//,/\", \"}],\"SecurityGroups\":[\"$SG_ID\"],\"AssignPublicIp\":\"ENABLED\"}}}"
