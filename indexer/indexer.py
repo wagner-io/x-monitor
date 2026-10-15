@@ -1,34 +1,29 @@
 import os
-from datetime import datetime
-from s3_accessor import S3Accessor
-from embedder import Embedder
-from faiss_store import FaissStore
-from metadata_builder import build_metadata
+from datetime import datetime, timezone
 
-def main():
-    bucket = os.environ.get("DATA_BUCKET", "x-monitor-data")
-    model_dir = os.environ.get("MODEL_DIR", "/app/model")
-    output_dir = os.environ.get("OUTPUT_DIR", "/tmp/faiss")
+from .embedder import Embedder
+from .faiss_store import FaissStore
+from .s3_accessor import S3Accessor
 
-    print(f"[{datetime.now()}] Starte Indexaufbau für Bucket {bucket}")
 
+def main() -> None:
+    bucket = os.getenv("DATA_BUCKET", "x-monitor-data")
+    prefix = os.getenv("S3_PREFIX", "logs/")
+    output_dir = os.getenv("OUTPUT_DIR", "data/index")
+    backend = os.getenv("EMBEDDING_BACKEND", "sentence-transformers")
+    model_dir = os.getenv("MODEL_DIR", "/app/model")
+    dimensions = int(os.getenv("INDEX_DIM", "384"))
+
+    print(f"[{datetime.now(timezone.utc).isoformat()}] Building index for {bucket}/{prefix}")
     s3 = S3Accessor(bucket)
-    embedder = Embedder(model_dir)
-    store = FaissStore(dim=384)
-
-    # 1️⃣ Texte laden
-    keys = s3.list_objects("logs/")
-    texts = [s3.get_object_text(k) for k in keys]
-
-    # 2️⃣ Embeddings erzeugen
-    embeddings = embedder.embed(texts)
-
-    # 3️⃣ In Index speichern
-    metadata = [{"s3_key": k} for k in keys]
-    store.add_vectors(embeddings, metadata)
+    keys = s3.list_objects(prefix)
+    texts = [s3.get_object_text(key) for key in keys]
+    embedder = Embedder(model_dir, backend, dimensions)
+    store = FaissStore(dim=dimensions)
+    store.add_vectors(embedder.embed(texts), [{"s3_key": key, "text": text} for key, text in zip(keys, texts)])
     store.save(output_dir)
+    print(f"Index created: {len(keys)} documents")
 
-    print(f"✅ Index erfolgreich erstellt ({len(keys)} Dokumente).")
 
 if __name__ == "__main__":
     main()
